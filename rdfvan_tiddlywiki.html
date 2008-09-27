@@ -506,6 +506,59 @@ Also see AdvancedOptions</pre>
 </div>
 <!--POST-SHADOWAREA-->
 <div id="storeArea">
+<div title="Advanced download options" modifier="Jim Pick" created="200808191510" modified="200809271542" changecount="1">
+<pre>When you click on the blue [[download|Download]] button, the website will detect your browser and operating system, and trigger a download for either an empty ~TiddlyWiki file or, if you're running [[Safari]] or [[Opera]], a zip file which also includes the TiddlySaver file. This is version &lt;&lt;version&gt;&gt; of ~TiddlyWiki ([[release notes|http://trac.tiddlywiki.org/wiki/History]]).
+
+Advanced users may find these download options helpful (right click the link and select &quot;Save as&quot; to download):
+*[[An empty TiddlyWiki file|http://www.tiddlywiki.com/empty.html]]
+*[[A zip file containing an empty TiddlyWiki file plus a TiddlySaver file|http://www.tiddlywiki.com/empty.zip]]
+*[[A copy of this website (TiddlyWiki.com) minus images|#]] 
+*[[The TiddlySaver.jar file on it's own|http://www.tiddlywiki.com/TiddlySaver.jar]]
+Finally, these links may be useful:
+*[[Installation]] instructions for the main browsers
+*A list of supported [[Browsers]]</pre>
+</div>
+<div title="ChunkyButtonStyle" modifier="PhilHawksworth" created="200808130000">
+<pre>/*{{{*/
+
+	span.chunkyButton {
+		display: block;
+		padding: 0;
+		margin: 0;
+		border: solid 2px [[ColorPalette::Foreground]];
+	}
+	span.chunkyButton a.button, span.chunkyButton a:active.button {
+		white-space: nowrap;
+		font-weight: bold;
+		font-size:1.8em;
+		color: [[ColorPalette::Background]];
+		background-color: [[ColorPalette::PrimaryMid]];
+		text-align: center;
+		padding: 1em 3em;
+		margin: 0;
+		border-style: none;
+		border-top: solid 1px [[ColorPalette::Background]];
+		display: block;
+	}
+	span.chunkyButton a.button:hover {
+		background-color: [[ColorPalette::PrimaryDark]];
+		border-style: none;
+		color: [[ColorPalette::Background]];
+		border-top: solid 1px [[ColorPalette::PrimaryPale]];
+	}
+	
+	.downloadButton table,
+	.downloadButton table tr,
+	.downloadButton table td  {
+		border-style:none;
+		vertical-align:bottom;
+		padding:0 0.5em 0 0;
+		margin:0 0 0.2em 0;
+	}
+
+
+/*}}}*/</pre>
+</div>
 <div title="Contact" modifier="Jim Pick" created="200809270212" changecount="16">
 <pre>Contact [[Jim Pick | http://jimpick.com/ ]] for more information on this project.</pre>
 </div>
@@ -514,6 +567,66 @@ Also see AdvancedOptions</pre>
 [[Events]]
 [[Contact]]
 [[Public Domain]]</pre>
+</div>
+<div title="Download" modifier="Jim Pick" created="200805221001" modified="200809271542" tags="download gettingstarted" changecount="1">
+<pre>{{downloadButton{
+|&lt;&lt;download&gt;&gt;|
+
+[[Advanced options &gt;&gt;|Advanced download options]]</pre>
+</div>
+<div title="DownloadTiddlyWikiPlugin" modifier="TW" created="200808130000" tags="systemConfig">
+<pre>/***
+|''Name:''|DownloadTiddlyWikiPlugin|
+|''Description:''|Download TiddlyWiki according to browser type|
+|''Version:''|0.0.8|
+|''Date:''|Aug 26, 2008|
+|''Source:''|http://www.tiddlywiki.com/#DownloadTiddlyWikiPlugin|
+|''License:''|[[BSD open source license]]|
+|''~CoreVersion:''|2.4.1|
+***/
+
+//{{{
+if(!version.extensions.DownloadTiddlyWikiPlugin) {
+version.extensions.DownloadTiddlyWikiPlugin = {installed:true};
+
+config.macros.download = {};
+
+merge(config.macros.download,{
+	label: &quot;download&quot;,
+	prompt: &quot;Download TiddlyWiki&quot;,
+	className: &quot;chunkyButton&quot;});
+
+config.macros.download.handler = function(place,macroName,params,wikifier,paramString,tiddler)
+{
+	var span = createTiddlyElement(place,&quot;span&quot;,null,this.className);
+	createTiddlyButton(span,params[0]||this.label,params[1]||this.prompt,this.onClick);
+};
+
+config.macros.download.onClick = function(ev)
+{
+	// display the tiddler containing the instructions
+	var e = ev || window.event;
+	var title = &quot;Installation&quot;;
+	var url = config.browser.isSafari || config.browser.isOpera ? 'http://www.tiddlywiki.com/empty.zip' :'http://www.tiddlywiki.com/empty.download';
+	if(config.browser.isOpera || config.browser.isWindows) {
+		story.displayTiddler(target,title);
+		window.setTimeout(function() {document.location.href = url;},300);
+	} else {
+		// put an iframe in the target instructions tiddler to start the download
+		var html = '&lt;html&gt;&lt;iframe src=&quot;' + url + '&quot; style=&quot;display:none&quot;&gt;&lt;/html&gt;';
+		var tiddler = store.getTiddler(title);
+		var oldText = tiddler.text;
+		tiddler.text = html + tiddler.text;
+		var target = resolveTarget(e);
+		story.closeTiddler(title,true);
+		story.displayTiddler(target,title);
+		tiddler.text = oldText;
+	}
+	return false;
+};
+
+} //# end of 'install only once'
+//}}}</pre>
 </div>
 <div title="Events" modifier="Jim Pick" created="200809270211" modified="200809270219" changecount="17">
 <pre>Stay tuned for upcoming RDF Vancouver events. This is an open project, and anybody who is interested is invited to participate.
@@ -549,6 +662,25 @@ It is downloadable for online or offline use from http://rdfvancouver.org/.  (NO
 </div>
 <div title="SiteTitle" modifier="YourName" created="200809270155" modified="200809270155" changecount="16">
 <pre>RDF Vancouver</pre>
+</div>
+<div title="StyleSheet" modifier="JeremyRuston" created="200603311518" modified="200612031950">
+<pre>/***
+This fixes a problem with the tabs slider
+***/
+/*{{{*/
+#sidebarTabs .button {
+	margin:0em 0.2em;
+	padding:0.2em 0.3em;
+	display:block;
+}
+/*}}}*/
+/***
+This is a sample style definition to demonstrate CustomCssClass formatting
+***/
+/*{{{*/
+.wrappingClass {color: #666; background: #bbb;}
+[[ChunkyButtonStyle]]
+/*}}}*/</pre>
 </div>
 </div>
 <!--POST-STOREAREA-->
