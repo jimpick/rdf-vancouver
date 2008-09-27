@@ -682,6 +682,2150 @@ This is a sample style definition to demonstrate CustomCssClass formatting
 [[ChunkyButtonStyle]]
 /*}}}*/</pre>
 </div>
+<div title="diff" modifier="TonyGarnockJones" created="200806110000" tags="systemConfig excludeLists excludeSearch">
+<pre>// Copyright (c) 2006, 2008 Tony Garnock-Jones &lt;tonyg@lshift.net&gt;
+// Copyright (c) 2006, 2008 LShift Ltd. &lt;query@lshift.net&gt;
+//
+// Permission is hereby granted, free of charge, to any person
+// obtaining a copy of this software and associated documentation files
+// (the &quot;Software&quot;), to deal in the Software without restriction,
+// including without limitation the rights to use, copy, modify, merge,
+// publish, distribute, sublicense, and/or sell copies of the Software,
+// and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be
+// included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+// BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+// ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+Diff = {
+    longest_common_subsequence: function(file1, file2) {
+        /* Text diff algorithm following Hunt and McIlroy 1976.
+         * J. W. Hunt and M. D. McIlroy, An algorithm for differential file
+         * comparison, Bell Telephone Laboratories CSTR #41 (1976)
+         * http://www.cs.dartmouth.edu/~doug/
+         *
+         * Expects two arrays of strings.
+         */
+        var equivalenceClasses;
+        var file2indices;
+        var newCandidate;
+        var candidates;
+        var line;
+        var c, i, j, jX, r, s;
+
+        equivalenceClasses = {};
+        for (j = 0; j &lt; file2.length; j++) {
+            line = file2[j];
+            if (equivalenceClasses[line]) {
+                equivalenceClasses[line].push(j);
+            } else {
+                equivalenceClasses[line] = [j];
+            }
+        }
+
+        candidates = [{file1index: -1,
+                       file2index: -1,
+                       chain: null}];
+
+        for (i = 0; i &lt; file1.length; i++) {
+            line = file1[i];
+            file2indices = equivalenceClasses[line] || [];
+
+            r = 0;
+            c = candidates[0];
+
+            for (jX = 0; jX &lt; file2indices.length; jX++) {
+                j = file2indices[jX];
+
+                for (s = 0; s &lt; candidates.length; s++) {
+                    if ((candidates[s].file2index &lt; j) &amp;&amp;
+                        ((s == candidates.length - 1) ||
+                         (candidates[s + 1].file2index &gt; j)))
+                        break;
+                }
+
+                if (s &lt; candidates.length) {
+                    newCandidate = {file1index: i,
+                                    file2index: j,
+                                    chain: candidates[s]};
+                    if (r == candidates.length) {
+                        candidates.push(c);
+                    } else {
+                        candidates[r] = c;
+                    }
+                    r = s + 1;
+                    c = newCandidate;
+                    if (r == candidates.length) {
+                        break; // no point in examining further (j)s
+                    }
+                }
+            }
+
+            candidates[r] = c;
+        }
+
+        // At this point, we know the LCS: it's in the reverse of the
+        // linked-list through .chain of
+        // candidates[candidates.length - 1].
+
+        return candidates[candidates.length - 1];
+    },
+
+    diff_comm: function(file1, file2) {
+        // We apply the LCS to build a &quot;comm&quot;-style picture of the
+        // differences between file1 and file2.
+
+        var result = [];
+        var tail1 = file1.length;
+        var tail2 = file2.length;
+        var common = {common: []};
+
+        function processCommon() {
+            if (common.common.length) {
+                common.common.reverse();
+                result.push(common);
+                common = {common: []};
+            }
+        }
+
+        for (var candidate = Diff.longest_common_subsequence(file1, file2);
+             candidate !== null;
+             candidate = candidate.chain)
+        {
+            var different = {file1: [], file2: []};
+
+            while (--tail1 &gt; candidate.file1index) {
+                different.file1.push(file1[tail1]);
+            }
+
+            while (--tail2 &gt; candidate.file2index) {
+                different.file2.push(file2[tail2]);
+            }
+
+            if (different.file1.length || different.file2.length) {
+                processCommon();
+                different.file1.reverse();
+                different.file2.reverse();
+                result.push(different);
+            }
+
+            if (tail1 &gt;= 0) {
+                common.common.push(file1[tail1]);
+            }
+        }
+
+        processCommon();
+
+        result.reverse();
+        return result;
+    },
+
+    diff_patch: function(file1, file2) {
+        // We apply the LCD to build a JSON representation of a
+        // diff(1)-style patch.
+
+        var result = [];
+        var tail1 = file1.length;
+        var tail2 = file2.length;
+
+        function chunkDescription(file, offset, length) {
+            var chunk = [];
+            for (var i = 0; i &lt; length; i++) {
+                chunk.push(file[offset + i]);
+            }
+            return {offset: offset,
+                    length: length,
+                    chunk: chunk};
+        }
+
+        for (var candidate = Diff.longest_common_subsequence(file1, file2);
+             candidate !== null;
+             candidate = candidate.chain)
+        {
+            var mismatchLength1 = tail1 - candidate.file1index - 1;
+            var mismatchLength2 = tail2 - candidate.file2index - 1;
+            tail1 = candidate.file1index;
+            tail2 = candidate.file2index;
+
+            if (mismatchLength1 || mismatchLength2) {
+                result.push({file1: chunkDescription(file1,
+                                                     candidate.file1index + 1,
+                                                     mismatchLength1),
+                             file2: chunkDescription(file2,
+                                                     candidate.file2index + 1,
+                                                     mismatchLength2)});
+            }
+        }
+
+        result.reverse();
+        return result;
+    },
+
+    invert_patch: function(patch) {
+        // Takes the output of Diff.diff_patch(), and inverts the
+        // sense of it, so that it can be applied to file2 to give
+        // file1 rather than the other way around.
+
+        for (var i = 0; i &lt; patch.length; i++) {
+            var chunk = patch[i];
+            var tmp = chunk.file1;
+            chunk.file1 = chunk.file2;
+            chunk.file2 = tmp;
+        }
+    },
+
+    patch: function (file, patch) {
+        // Applies a patch to a file.
+        //
+        // Given file1 and file2, Diff.patch(file1,
+        // Diff.diff_patch(file1, file2)) should give file2.
+
+        var result = [];
+        var commonOffset = 0;
+
+        function copyCommon(targetOffset) {
+            while (commonOffset &lt; targetOffset) {
+                result.push(file[commonOffset]);
+                commonOffset++;
+            }
+        }
+
+        for (var chunkIndex = 0; chunkIndex &lt; patch.length; chunkIndex++) {
+            var chunk = patch[chunkIndex];
+            copyCommon(chunk.file1.offset);
+            for (var lineIndex = 0; lineIndex &lt; chunk.file2.length; lineIndex++) {
+                result.push(chunk.file2.chunk[lineIndex]);
+            }
+            commonOffset += chunk.file1.length;
+        }
+
+        copyCommon(file.length);
+        return result;
+    },
+
+    diff_indices: function(file1, file2) {
+        // We apply the LCS to give a simple representation of the
+        // offsets and lengths of mismatched chunks in the input
+        // files. This is used by diff3_merge_indices below.
+
+        var result = [];
+        var tail1 = file1.length;
+        var tail2 = file2.length;
+
+        for (var candidate = Diff.longest_common_subsequence(file1, file2);
+             candidate !== null;
+             candidate = candidate.chain)
+        {
+            var mismatchLength1 = tail1 - candidate.file1index - 1;
+            var mismatchLength2 = tail2 - candidate.file2index - 1;
+            tail1 = candidate.file1index;
+            tail2 = candidate.file2index;
+
+            if (mismatchLength1 || mismatchLength2) {
+                result.push({file1: [tail1 + 1, mismatchLength1],
+                             file2: [tail2 + 1, mismatchLength2]});
+            }
+        }
+
+        result.reverse();
+        return result;
+    },
+
+    diff3_merge_indices: function (a, o, b) {
+        // Given three files, A, O, and B, where both A and B are
+        // independently derived from O, returns a fairly complicated
+        // internal representation of merge decisions it's taken. The
+        // interested reader may wish to consult
+        //
+        // Sanjeev Khanna, Keshav Kunal, and Benjamin C. Pierce. &quot;A
+        // Formal Investigation of Diff3.&quot; In Arvind and Prasad,
+        // editors, Foundations of Software Technology and Theoretical
+        // Computer Science (FSTTCS), December 2007.
+        //
+        // (http://www.cis.upenn.edu/~bcpierce/papers/diff3-short.pdf)
+        var i;
+
+        var m1 = Diff.diff_indices(o, a);
+        var m2 = Diff.diff_indices(o, b);
+
+        var hunks = [];
+        function addHunk(h, side) {
+            hunks.push([h.file1[0], side, h.file1[1], h.file2[0], h.file2[1]]);
+        }
+        for (i = 0; i &lt; m1.length; i++) { addHunk(m1[i], 0); }
+        for (i = 0; i &lt; m2.length; i++) { addHunk(m2[i], 2); }
+        hunks.sort();
+
+        var result = [];
+        var commonOffset = 0;
+        function copyCommon(targetOffset) {
+            if (targetOffset &gt; commonOffset) {
+                result.push([1, commonOffset, targetOffset - commonOffset]);
+                commonOffset = targetOffset;
+            }
+        }
+
+        for (var hunkIndex = 0; hunkIndex &lt; hunks.length; hunkIndex++) {
+            var firstHunkIndex = hunkIndex;
+            var hunk = hunks[hunkIndex];
+            var regionLhs = hunk[0];
+            var regionRhs = regionLhs + hunk[2];
+            while (hunkIndex &lt; hunks.length - 1) {
+                var maybeOverlapping = hunks[hunkIndex + 1];
+                var maybeLhs = maybeOverlapping[0];
+                if (maybeLhs &gt;= regionRhs) break;
+                regionRhs = maybeLhs + maybeOverlapping[2];
+                hunkIndex++;
+            }
+
+            copyCommon(regionLhs);
+            if (firstHunkIndex == hunkIndex) {
+                if (hunk[4] &gt; 0) {
+                    result.push([hunk[1], hunk[3], hunk[4]]);
+                }
+            } else {
+                var regions = [a.length, -1, regionLhs, regionRhs, b.length, -1];
+                for (i = firstHunkIndex; i &lt;= hunkIndex; i++) {
+                    var side = hunks[i][1];
+                    var lhs = hunks[i][3];
+                    var rhs = lhs + hunks[i][4];
+                    var ri = side * 2;
+                    regions[ri] = Math.min(lhs, regions[ri]);
+                    regions[ri+1] = Math.max(rhs, regions[ri+1]);
+                }
+                result.push([-1,
+                             regions[0], regions[1] - regions[0],
+                             regions[2], regions[3] - regions[2],
+                             regions[4], regions[5] - regions[4]]);
+            }
+            commonOffset = regionRhs;
+        }
+
+        copyCommon(o.length);
+        return result;
+    },
+
+    diff3_merge: function (a, o, b, excludeFalseConflicts) {
+        // Applies the output of Diff.diff3_merge_indices to actually
+        // construct the merged file; the returned result alternates
+        // between &quot;ok&quot; and &quot;conflict&quot; blocks.
+
+        var result = [];
+        var files = [a, o, b];
+        var indices = Diff.diff3_merge_indices(a, o, b);
+
+        var okLines = [];
+        function flushOk() {
+            if (okLines) {
+                result.push({ok: okLines});
+            }
+            okLines = [];
+        }
+        function pushOk(xs) {
+            for (var j = 0; j &lt; xs.length; j++) {
+                okLines.push(xs[j]);
+            }
+        }
+
+        function isTrueConflict(rec) {
+            if (rec[2] != rec[6]) return true;
+            var aoff = rec[1];
+            var boff = rec[5];
+            for (var j = 0; j &lt; rec[2]; j++) {
+                if (a[j + aoff] != b[j + boff]) return true;
+            }
+            return false;
+        }
+
+        for (var i = 0; i &lt; indices.length; i++) {
+            var x = indices[i];
+            var side = x[0];
+            if (side == -1) {
+                if (excludeFalseConflicts &amp;&amp; !isTrueConflict(x)) {
+                    pushOk(files[0].slice(x[1], x[1] + x[2]));
+                } else {
+                    flushOk();
+                    result.push({conflict: {a: a.slice(x[1], x[1] + x[2]),
+                                            aIndex: x[1],
+                                            o: o.slice(x[3], x[3] + x[4]),
+                                            oIndex: x[3],
+                                            b: b.slice(x[5], x[5] + x[6]),
+                                            bIndex: x[5]}});
+                }
+            } else {
+                pushOk(files[side].slice(x[1], x[1] + x[2]));
+            }
+        }
+
+        flushOk();
+        return result;
+    }
+};</pre>
+</div>
+<div title="draw" modifier="TonyGarnockJones" created="200806110000" tags="systemConfig excludeLists excludeSearch">
+<pre>// Copyright (c) 2008 Tony Garnock-Jones &lt;tonyg@lshift.net&gt;
+// Copyright (c) 2008 LShift Ltd. &lt;query@lshift.net&gt;
+//
+// Permission is hereby granted, free of charge, to any person
+// obtaining a copy of this software and associated documentation files
+// (the &quot;Software&quot;), to deal in the Software without restriction,
+// including without limitation the rights to use, copy, modify, merge,
+// publish, distribute, sublicense, and/or sell copies of the Software,
+// and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be
+// included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+// BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+// ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+DrawDvcs = {
+    renderRepository: function (repo) {
+        var childCount = {};
+        var ordering = [];
+        var i, j, item, parent, column, row;
+
+        var worklist = repo.childlessRevisions();
+        while (worklist.length) {
+            item = worklist.shift();
+            ordering.push(item);
+
+            var parents = repo.lookupParents(item);
+            for (i = 0; i &lt; parents.length; i++) {
+                parent = parents[i];
+                if (childCount[parent] == undefined) {
+                    childCount[parent] = (repo.children[parent] || []).length;
+                }
+                childCount[parent] = childCount[parent] - 1;
+                if (childCount[parent] === 0) {
+                    worklist.push(parent);
+                }
+            }
+        }
+
+        var slots = [];
+        var assignments = {};
+
+        function allocateSlot(item) {
+            var column = assignments[item];
+            if (typeof(column) != 'number') {
+                column = null;
+                for (var j = 0; j &lt; slots.length; j++) {
+                    if (slots[j] === null) {
+                        column = j;
+                        break;
+                    }
+                }
+                if (column === null) {
+                    slots.push(item);
+                    column = slots.length - 1;
+                }
+            }
+            return column;
+        }
+
+        var finalAssignments = [];
+        var cells = [];
+        var oldrow = [];
+
+        for (i = 0; i &lt; ordering.length; i++) {
+            item = ordering[i];
+            var hasKid = typeof(assignments[item]) == 'number';
+            column = allocateSlot(item);
+            var parentIds = repo.lookupParents(item);
+            var parentColumns = [];
+            slots[column] = null;
+
+            for (j = 0; j &lt; parentIds.length; j++) {
+                parent = parentIds[j];
+                var c2 = (j === 0)
+                    ? (typeof(assignments[parent]) == 'number'
+                       ? allocateSlot(parent)
+                       : column)
+                    : allocateSlot(parent);
+                parentColumns.push(c2);
+                slots[c2] = parent;
+                assignments[parent] = c2;
+            }
+
+            finalAssignments.push(column);
+
+            row = [];
+            for (j = 0; j &lt; slots.length; j++) {
+                var oldCell = (oldrow.length &gt;= j ? oldrow[j] : 0);
+                if (oldCell &amp; 16) {
+                    row[j] = (oldCell &amp; 4) ? 1 : 0;
+                } else {
+                    row[j] = (oldCell &amp; (1 | 4 | 8)) ? 1 : 0;
+                }
+            }
+            row[column] = 16 | (hasKid ? 1 : 0);
+            for (j = 0; j &lt; parentColumns.length; j++) {
+                var parentColumn = parentColumns[j];
+                var n1 = Math.min(parentColumn, column) + 1;
+                var n2 = Math.max(parentColumn, column);
+                for (var k = n1; k &lt; n2; k++) {
+                    row[k] = row[k] | 2;
+                }
+                if (parentColumn == column) {
+                    row[parentColumn] = row[parentColumn] | 4;
+                } else {
+                    row[parentColumn] = row[parentColumn] | (column &gt; parentColumn ? 8 : 4);
+                    row[column] = row[column] | (column &gt; parentColumn ? 2 : 8);
+                }
+            }
+            cells.push(row);
+            oldrow = row;
+        }
+
+        var results = [];
+        for (i = 0; i &lt; ordering.length; i++) {
+            item = ordering[i];
+            column = finalAssignments[i];
+
+            row = cells[i];
+
+            var result = {revId: item, pictures: []};
+            for (j = 0; j &lt; row.length; j++) {
+                var v = row[j];
+                result.pictures.push((v &amp; 16 ? &quot;blob_&quot; : &quot;stick_&quot;) + (v &amp; 15) + &quot;.png&quot;);
+            }
+            results.push(result);
+        }
+
+        return results;
+    },
+
+    simpleRenderRepository: function (repo) {
+        var ordering = DrawDvcs.renderRepository(repo);
+        var html = &quot;&quot;;
+        for (var i = 0; i &lt; ordering.length; i++) {
+            var item = ordering[i];
+            var rev = repo.lookupRev(item.revId);
+            var pictures = item.pictures;
+            for (var j = 0; j &lt; pictures.length; j++) {
+                html = html + &quot;&lt;img src='img/&quot; + pictures[j] + &quot;' /&gt;&quot;;
+            }
+            html = html+&quot; &quot;+item.revId+&quot; (&quot;+rev.branch+&quot;) &quot;+(rev.metadata||{}).summary+&quot;&lt;br /&gt;\n&quot;;
+        }
+        return &quot;&lt;p style='line-height: 0px; white-space: nowrap;'&gt;&quot; + html + &quot;&lt;/p&gt;&quot;;
+    }
+};</pre>
+</div>
+<div title="fs" modifier="TonyGarnockJones" created="200806110000" modified="200806120000" tags="systemConfig excludeLists excludeSearch">
+<pre>// Copyright (c) 2008 Tony Garnock-Jones &lt;tonyg@lshift.net&gt;
+// Copyright (c) 2008 LShift Ltd. &lt;query@lshift.net&gt;
+//
+// Permission is hereby granted, free of charge, to any person
+// obtaining a copy of this software and associated documentation files
+// (the &quot;Software&quot;), to deal in the Software without restriction,
+// including without limitation the rights to use, copy, modify, merge,
+// publish, distribute, sublicense, and/or sell copies of the Software,
+// and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be
+// included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+// BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+// ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+var Dvcs = {
+    _debugMode: false,
+
+    Util: {
+        random_hex_string: function(n) {
+            var digits = &quot;0123456789abcdef&quot;;
+            var result = &quot;&quot;;
+            for (var i = 0; i &lt; n; i++) {
+                result = result + digits[Math.floor(Math.random() * 16)];
+            }
+            return result;
+        },
+
+        random_uuid: function() {
+            if (Dvcs._debugMode) {
+                return Dvcs.Util.random_hex_string(8);
+            } else {
+                return [Dvcs.Util.random_hex_string(8),
+                        Dvcs.Util.random_hex_string(4),
+                        &quot;4&quot; + Dvcs.Util.random_hex_string(3),
+                        ((Math.floor(Math.random() * 256) &amp; ~64) | 128).toString(16) +
+                        Dvcs.Util.random_hex_string(2),
+                        Dvcs.Util.random_hex_string(12)].join(&quot;-&quot;);
+            }
+        },
+
+        dict_union: function(s1, s2) {
+            var result = {};
+            var k;
+            for (k in s2) { result[k] = s2[k]; }
+            for (k in s1) { result[k] = s1[k]; }
+            return result;
+        },
+
+        dict_difference: function(s1, s2) {
+            var result = {};
+            var k;
+            for (k in s1) { result[k] = s1[k]; }
+            for (k in s2) { delete result[k]; }
+            return result;
+        },
+
+        dict_to_set: function(d) {
+            for (var k in d) { d[k] = 1; }
+            return d;
+        },
+
+        deepCopy: function(obj) {
+            // Courtesy of
+            // http://keithdevens.com/weblog/archive/2007/Jun/07/javascript.clone
+            //
+            // Does not handle recursive structures.
+
+            if (obj === null || typeof(obj) != 'object') {
+                return obj;
+            }
+
+            var temp = obj.constructor();
+            for (var key in obj) {
+                temp[key] = Dvcs.Util.deepCopy(obj[key]);
+            }
+            return temp;
+        }
+    },
+
+    Mergers: {
+        simpleScalarMerger: function(v1, v0, v2) {
+            if (v1 == v2) return [{ok: v1}];
+            if (v1 == v0) return [{ok: v2}];
+            if (v2 == v0) return [{ok: v1}];
+            return [{conflict: {a: v1, o: v0, b: v2}}];
+        },
+
+        simpleTextualMerger: function(v1, v0, v2) {
+            return Diff.diff3_merge(v1, v0, v2, true);
+        },
+
+        Defaults: {}
+    },
+
+    Checkout: function(directParent, additionalParent, currentBranch) {
+        this.inodes = {};
+        this.directParent = directParent;
+        this.additionalParent = additionalParent;
+        this.dirty = {};
+	this.anyDirty = false;
+        this.currentBranch = currentBranch;
+    },
+
+    Repository: function() {
+        this.bodies = {};
+        this.revisions = {};
+        this.children = {};
+    }
+};
+
+Dvcs.Mergers.Defaults[&quot;text&quot;] = Dvcs.Mergers.simpleTextualMerger;
+
+Dvcs.Checkout.prototype.setDirty = function(uuid) {
+    this.dirty[uuid] = uuid;
+    this.anyDirty = true;
+}
+
+Dvcs.Checkout.prototype.createFile = function() {
+    var uuid = Dvcs.Util.random_uuid();
+    if (Dvcs._debugMode) { uuid = &quot;inode-&quot; + uuid; }
+    this.inodes[uuid] = {};
+    this.setDirty(uuid);
+    return uuid;
+};
+
+Dvcs.Checkout.prototype.deleteFile = function(uuid) {
+    if (!this.inodes[uuid]) return false;
+    delete this.inodes[uuid];
+    this.anyDirty = true;
+    return true;
+};
+
+Dvcs.Checkout.prototype.fileExists = function(uuid) {
+    return !!(this.inodes[uuid]);
+};
+
+Dvcs.Checkout.prototype.hasProp = function(uuid, prop) {
+    var inode = this.inodes[uuid];
+    if (!inode) return null;
+    return (inode[prop] !== undefined);
+}
+
+Dvcs.Checkout.prototype.getProp = function(uuid, prop, defaultValue) {
+    var inode = this.inodes[uuid];
+    if (!inode) return null;
+    var v = inode[prop];
+    if (v === undefined) {
+	return defaultValue;
+    } else {
+	return Dvcs.Util.deepCopy(v);
+    }
+};
+
+Dvcs.Checkout.prototype.setProp = function(uuid, prop, value) {
+    var inode = this.inodes[uuid];
+    if (!inode) return false;
+    inode[prop] = value;
+    this.setDirty(uuid);
+    return true;
+};
+
+Dvcs.Checkout.prototype.clearProp = function(uuid, prop) {
+    var inode = this.inodes[uuid];
+    if (!inode) return null;
+    if (inode[prop] !== undefined) {
+	delete inode[prop];
+	this.setDirty(uuid);
+    }
+    return true;
+}
+
+Dvcs.Checkout.prototype.forEachProp = function(uuid, f) {
+    var inode = this.inodes[uuid];
+    if (!inode) return null;
+    for (var prop in inode) {
+	f(prop, inode[prop]);
+    }
+}
+
+Dvcs.Checkout.prototype.forEachFile = function(f) {
+    for (var uuid in this.inodes) {
+	f(uuid);
+    }
+};
+
+Dvcs.Checkout.prototype.getBranch = function() {
+    return this.currentBranch;
+};
+
+Dvcs.Checkout.prototype.setBranch = function(newBranch) {
+    this.currentBranch = newBranch;
+};
+
+Dvcs.Checkout.prototype.clone = function() {
+    var result = new Dvcs.Checkout(this.directParent,
+                                   this.additionalParent,
+                                   this.currentBranch);
+    result.inodes = Dvcs.Util.deepCopy(this.inodes);
+    return result;
+};
+
+Dvcs.Repository.prototype.resolveRevId = function(revId) {
+    if (this.revisions[revId]) {
+        return revId;
+    } else {
+        return this.branchTip(revId);
+    }
+};
+
+Dvcs.Repository.prototype.lookupRev = function(revId, shouldResolve) {
+    var candidate = this.revisions[revId];
+    if (!candidate &amp;&amp; (shouldResolve !== false)) {
+        // shouldResolve is an optional parameter, hence the odd test in the line above
+        candidate = this.revisions[this.branchTip(revId)];
+    }
+    return candidate
+        || { alive: {},
+             dead: {},
+             changed: [],
+             branch: null,
+             timestamp: 0,
+             metadata: null, 
+             directParent: null,
+             additionalParent: null };
+};
+
+Dvcs.Repository.prototype.getMetadata = function(revId, shouldResolve) {
+    return this.lookupRev(revId, shouldResolve).metadata;
+};
+
+Dvcs.Repository.prototype.getBody = function(revRecord, aliveInodeId) {
+    var bodyId = revRecord.alive[aliveInodeId];
+    if (!bodyId) return {};
+    return Dvcs.Util.deepCopy(this.bodies[bodyId]);
+};
+
+Dvcs.Repository.prototype.update = function(unresolvedRevId) {
+    var revId = this.resolveRevId(unresolvedRevId);
+    var rev = this.revisions[revId];
+    if (!rev) {
+        if (unresolvedRevId === null) {
+            // meaning &quot;default branch&quot;. We only get here if the user
+            // asked for the default branch and there are currently no
+            // commits at all in the repo. Hand back an empty
+            // checkout.
+            return new Dvcs.Checkout(null, null, null);
+        } else {
+            // Couldn't find what the user asked for.
+            return null;
+        }
+    }
+
+    var fs = new Dvcs.Checkout(revId, null, rev.branch);
+    for (var inode in rev.alive) {
+        fs.inodes[inode] = this.getBody(rev, inode);
+    }
+    return fs;
+};
+
+Dvcs.Repository.prototype.commit = function(fs, metadata) {
+    if (!fs.anyDirty) {
+	return null;
+    }
+
+    var directParentRev = this.lookupRev(fs.directParent);
+    var additionalParentRev = this.lookupRev(fs.additionalParent);
+
+    var oldAlive = Dvcs.Util.dict_union(directParentRev.alive, additionalParentRev.alive);
+    var oldDead = Dvcs.Util.dict_union(directParentRev.dead, additionalParentRev.dead);
+
+    var newChanged = [];
+    var newAlive = {};
+    for (var inodeId in fs.inodes) {
+        if (fs.dirty[inodeId]) {
+            var newBodyId = Dvcs.Util.random_uuid();
+            if (Dvcs._debugMode) { newBodyId = &quot;body-&quot; + newBodyId; }
+            this.bodies[newBodyId] = Dvcs.Util.deepCopy(fs.inodes[inodeId]);
+            newAlive[inodeId] = newBodyId;
+            newChanged.push(inodeId);
+        } else {
+            newAlive[inodeId] = oldAlive[inodeId];
+        }
+    }
+
+    var newDead = Dvcs.Util.dict_to_set(Dvcs.Util.dict_union(oldDead,
+                                                             Dvcs.Util.dict_difference(oldAlive,
+                                                                                       newAlive)));
+
+    var rev = { alive: newAlive,
+                dead: newDead,
+                changed: newChanged,
+                branch: fs.getBranch(),
+                timestamp: (new Date()).getTime(),
+                metadata: metadata,
+                directParent: fs.directParent,
+                additionalParent: fs.additionalParent };
+
+    var newRevId = Dvcs.Util.random_uuid();
+    if (Dvcs._debugMode) { newRevId = &quot;rev-&quot; + newRevId; }
+    this.recordRevision(newRevId, rev);
+
+    fs.directParent = newRevId;
+    fs.additionalParent = null;
+    fs.dirty = {};
+    fs.anyDirty = false;
+
+    return newRevId;
+};
+
+Dvcs.Repository.prototype.lookupParents = function (revId) {
+    var r = this.lookupRev(revId);
+    var result = [];
+    if (r.directParent) result.push(r.directParent);
+    if (r.additionalParent) result.push(r.additionalParent);
+    return result;
+};
+
+Dvcs.Repository.prototype.canMerge = function(r1, r2) {
+    var $elf = this;
+    function lookupParents(revId) { return $elf.lookupParents(revId); }
+    var ancestorRevId = Graph.least_common_ancestor(lookupParents, r1, r2);
+    return !(r1 == ancestorRevId || r2 == ancestorRevId);
+}
+
+Dvcs.Repository.prototype.merge = function(r1, r2) {
+    var rev1 = this.lookupRev(r1);
+    var rev2 = this.lookupRev(r2);
+
+    var $elf = this;
+    function lookupParents(revId) { return $elf.lookupParents(revId); }
+
+    var ancestorRevId = Graph.least_common_ancestor(lookupParents, r1, r2);
+    var ancestorRev = this.lookupRev(ancestorRevId, false);
+
+    if (r1 == ancestorRevId || r2 == ancestorRevId) {
+	return null;
+    }
+
+    var fs = this.update(r1);
+    fs.additionalParent = r2;
+    fs.anyDirty = true;
+
+    var conflicts = [];
+
+    for (var deadInode in rev2.dead) {
+        fs.deleteFile(deadInode);
+    }
+    for (var aliveInode in rev2.alive) {
+        if (fs.fileExists(aliveInode)) {
+            if (ancestorRev.alive[aliveInode] != rev1.alive[aliveInode] ||
+                ancestorRev.alive[aliveInode] != rev2.alive[aliveInode])
+            {
+                // It has a different body from the ancestor in one or
+                // both of the revs being merged.
+                var body0 = this.getBody(ancestorRev, aliveInode);
+                var body1 = fs.inodes[aliveInode];
+                var body2 = this.getBody(rev2, aliveInode);
+                this.mergeBodies(body1, body0, body2,
+                                 function (mergedBody) {
+                                     fs.inodes[aliveInode] = mergedBody;
+				     fs.setDirty(aliveInode);
+                                 },
+                                 function (partialResult, conflictDetails) {
+                                     conflicts.push({inode: aliveInode,
+                                                     partialResult: partialResult,
+                                                     conflictDetails: conflictDetails});
+                                 });
+            } else {
+                // It is unchanged. Leave it alone.
+            }
+        } else if (!rev1.dead[aliveInode]) {
+            fs.inodes[aliveInode] = this.getBody(rev2, aliveInode);
+	    fs.setDirty(aliveInode);
+        }
+    }
+
+    return {files: fs, conflicts: conflicts, ancestor: ancestorRevId};
+};
+
+Dvcs.Repository.prototype.lookupMerger = function(prop) {
+    return Dvcs.Mergers.Defaults[prop] || Dvcs.Mergers.simpleScalarMerger;
+};
+
+Dvcs.Repository.prototype.mergeBodies = function(bThis, bBase, bOther, kSuccess, kConflict) {
+    var props = Dvcs.Util.dict_union(bThis, bOther);
+    var bResult = {};
+    var failures = {};
+    var haveConflicts = false;
+    for (var prop in props) {
+        var merger = this.lookupMerger(prop);
+        var mergedPropValue = merger(bThis[prop], bBase[prop], bOther[prop]);
+        if (mergedPropValue.length == 1 &amp;&amp; mergedPropValue[0].ok) {
+            bResult[prop] = mergedPropValue[0].ok;
+        } else {
+            failures[prop] = mergedPropValue;
+            haveConflicts = true;
+        }
+    }
+
+    if (haveConflicts) {
+        return kConflict(bResult, failures);
+    } else {
+        return kSuccess(bResult);
+    }
+};
+
+Dvcs.Repository.prototype.recordRevision = function(newRevId, rev) {
+    var $elf = this;
+    function addChild(parentId) {
+        if (parentId === null) return;
+        if (!$elf.children[parentId]) {
+            $elf.children[parentId] = [newRevId];
+        } else {
+            $elf.children[parentId].push(newRevId);
+        }
+    }
+    this.revisions[newRevId] = rev;
+    addChild(rev.directParent);
+    addChild(rev.additionalParent);
+};
+
+Dvcs.Repository.prototype.exportRevisions = function(revIds) {
+    if (revIds) {
+        var revs = {};
+        for (var i = 0; i &lt; revIds; i++) {
+            var rev = this.revisions[revIds[i]];
+            if (rev) revs[revIds[i]] = rev;
+        }
+
+        var bodies = {};
+        for (var revId in revs) {
+            var alive = revs[revId].alive;
+            for (var inodeId in alive) {
+                var bodyId = alive[inodeId];
+                bodies[bodyId] = this.bodies[bodyId];
+            }
+        }
+
+        return {revisions: revs, bodies: bodies};
+    } else {
+        // Shortcut for all revisions. Be warned: shares structure!
+        return {revisions: this.revisions, bodies: this.bodies};
+    }
+};
+
+Dvcs.Repository.prototype.importRevisions = function(e) {
+    var stats = {
+	bodyCount: 0,
+	bodyDups: 0,
+	revCount: 0,
+	revDups: 0
+    };
+    for (var bodyId in e.bodies) {
+	if (!this.bodies[bodyId]) {
+            this.bodies[bodyId] = e.bodies[bodyId];
+	    stats.bodyCount++;
+	} else {
+	    stats.bodyDups++;
+	}
+    }
+    for (var revId in e.revisions) {
+	if (!this.revisions[revId]) {
+            this.recordRevision(revId, e.revisions[revId]);
+	    stats.revCount++;
+	} else {
+	    stats.revDups++;
+	}
+    }
+    return stats;
+};
+
+Dvcs.Repository.prototype.allRevisions = function() {
+    return Dvcs.Util.dict_to_set(this.revisions);
+};
+
+Dvcs.Repository.prototype.branchHeads = function(branch) {
+    var result = [];
+    for (var revId in this.revisions) {
+        var rev = this.revisions[revId];
+        if (rev.branch == branch) {
+            var hasChildrenWithinBranch = false;
+            var kids = this.children[revId] || [];
+            for (var i = 0; i &lt; kids.length; i++) {
+                if (this.revisions[kids[i]].branch == branch) {
+                    hasChildrenWithinBranch = true;
+                    break;
+                }
+            }
+            if (!hasChildrenWithinBranch) {
+                result.push(revId);
+            }
+        }
+    }
+    return result;
+};
+
+Dvcs.Repository.prototype.branchTip = function(branch) {
+    var newestHead = null;
+    var newestRev = null;
+    var branchHeads = this.branchHeads(branch);
+    for (var i = 0; i &lt; branchHeads.length; i++) {
+        var id = branchHeads[i];
+        var rev = this.lookupRev(id);
+        if (newestHead === null || newestRev.timestamp &lt; rev.timestamp) {
+            newestHead = id;
+            newestRev = rev;
+        }
+    }
+    return newestHead;
+};
+
+Dvcs.Repository.prototype.allBranches = function() {
+    var branches = {};
+    for (var revId in this.revisions) {
+        var rev = this.revisions[revId];
+        var branch = rev.branch;
+        var branchRecord = branches[branch];
+        if (!branchRecord) {
+            branchRecord = { active: false, heads: [] };
+            branches[branch] = branchRecord;
+        }
+
+        var hasChildrenWithinBranch = false;
+        var kids = this.children[revId] || [];
+        for (var i = 0; i &lt; kids.length; i++) {
+            if (this.revisions[kids[i]].branch == branch) {
+                hasChildrenWithinBranch = true;
+                break;
+            }
+        }
+        if (!hasChildrenWithinBranch) {
+            branchRecord.heads.push(revId);
+            if (kids.length === 0) {
+                branchRecord.active = true;
+            }
+        }
+    }
+    return branches;
+};
+
+Dvcs.Repository.prototype.childlessRevisions = function() {
+    var result = [];
+    for (var revId in this.revisions) {
+        var kids = this.children[revId] || [];
+        if (kids.length === 0) {
+            result.push(revId);
+        }
+    }
+    var revs = this.revisions;
+    result.sort(function (r1, r2) { return revs[r2].timestamp - revs[r1].timestamp; });
+    return result;
+};
+
+Dvcs.Repository.prototype.fileRevisions = function(uuid) {
+    var result = {};
+    for (var revId in this.revisions) {
+        var rev = this.revisions[revId];
+        for (var i = rev.changed.length - 1; i &gt;= 0; i--) {
+            if (uuid == rev.changed[i]) {
+                result[revId] = rev;
+                break;
+            }
+        }
+    }
+    return result;
+};</pre>
+</div>
+<div title="graph" modifier="TonyGarnockJones" created="200806110000" tags="systemConfig excludeLists excludeSearch">
+<pre>// Copyright (c) 2008 Tony Garnock-Jones &lt;tonyg@lshift.net&gt;
+// Copyright (c) 2008 LShift Ltd. &lt;query@lshift.net&gt;
+//
+// Permission is hereby granted, free of charge, to any person
+// obtaining a copy of this software and associated documentation files
+// (the &quot;Software&quot;), to deal in the Software without restriction,
+// including without limitation the rights to use, copy, modify, merge,
+// publish, distribute, sublicense, and/or sell copies of the Software,
+// and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be
+// included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+// BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+// ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+Graph = {
+    _foreach: function(arr, f) {
+        for (var i = 0; i &lt; arr.length; i++) {
+            f(arr[i]);
+        }
+    },
+
+    least_common_ancestor: function(parentsFun, leafId1, leafId2) {
+        /* This is a pretty crude approximation. Since we're working
+        with DAGs, rather than trees, it may not return the very very
+        least common ancestor. */
+
+        var potentialMatches = {};
+
+        function augmentPotentialMatches(nodeId) {
+            if (!potentialMatches[nodeId]) {
+                potentialMatches[nodeId] = nodeId;
+                Graph._foreach(parentsFun(nodeId), augmentPotentialMatches);
+            }
+        }
+
+        augmentPotentialMatches(leafId2);
+
+        var searchOrder = [leafId1];
+
+        function queueForExamination(nodeId) {
+            searchOrder.push(nodeId);
+        }
+
+        while (searchOrder.length) {
+            var candidateId = searchOrder.shift();
+            if (potentialMatches[candidateId]) {
+                return candidateId;
+            } else {
+                Graph._foreach(parentsFun(candidateId), queueForExamination);
+            }
+        }
+
+        return null; // no LCA found.
+    }
+};</pre>
+</div>
+<div title="json2" modifier="PublicDomain" created="200806150000" tags="systemConfig excludeLists excludeSearch">
+<pre>/*
+    http://www.JSON.org/json2.js
+    2008-06-08
+
+    Public Domain.
+
+    NO WARRANTY EXPRESSED OR IMPLIED. USE AT YOUR OWN RISK.
+
+    See http://www.JSON.org/js.html
+
+    This file creates a global JSON object containing two methods: stringify
+    and parse.
+
+
+        JSON.stringify(value, replacer, space)
+            value       any JavaScript value, usually an object or array.
+
+            replacer    an optional parameter that determines how object
+                        values are stringified for objects without a toJSON
+                        method. It can be a function or an array.
+
+            space       an optional parameter that specifies the indentation
+                        of nested structures. If it is omitted, the text will
+                        be packed without extra whitespace. If it is a number,
+                        it will specify the number of spaces to indent at each
+                        level. If it is a string (such as '\t' or '&amp;nbsp;'),
+                        it contains the characters used to indent at each level.
+
+            This method produces a JSON text from a JavaScript value.
+
+            When an object value is found, if the object contains a toJSON
+            method, its toJSON method will be called and the result will be
+            stringified. A toJSON method does not serialize: it returns the
+            value represented by the name/value pair that should be serialized,
+            or undefined if nothing should be serialized. The toJSON method
+            will be passed the key associated with the value, and this will be
+            bound to the object holding the key.
+
+            For example, this would serialize Dates as ISO strings.
+
+                Date.prototype.toJSON = function (key) {
+                    function f(n) {
+                        // Format integers to have at least two digits.
+                        return n &lt; 10 ? '0' + n : n;
+                    }
+
+                    return this.getUTCFullYear()   + '-' +
+                         f(this.getUTCMonth() + 1) + '-' +
+                         f(this.getUTCDate())      + 'T' +
+                         f(this.getUTCHours())     + ':' +
+                         f(this.getUTCMinutes())   + ':' +
+                         f(this.getUTCSeconds())   + 'Z';
+                };
+
+            You can provide an optional replacer method. It will be passed the
+            key and value of each member, with this bound to the containing
+            object. The value that is returned from your method will be
+            serialized. If your method returns undefined, then the member will
+            be excluded from the serialization.
+
+            If the replacer parameter is an array, then it will be used to
+            select the members to be serialized. It filters the results such
+            that only members with keys listed in the replacer array are
+            stringified.
+
+            Values that do not have JSON representaions, such as undefined or
+            functions, will not be serialized. Such values in objects will be
+            dropped; in arrays they will be replaced with null. You can use
+            a replacer function to replace those with JSON values.
+            JSON.stringify(undefined) returns undefined.
+
+            The optional space parameter produces a stringification of the
+            value that is filled with line breaks and indentation to make it
+            easier to read.
+
+            If the space parameter is a non-empty string, then that string will
+            be used for indentation. If the space parameter is a number, then
+            then indentation will be that many spaces.
+
+            Example:
+
+            text = JSON.stringify(['e', {pluribus: 'unum'}]);
+            // text is '[&quot;e&quot;,{&quot;pluribus&quot;:&quot;unum&quot;}]'
+
+
+            text = JSON.stringify(['e', {pluribus: 'unum'}], null, '\t');
+            // text is '[\n\t&quot;e&quot;,\n\t{\n\t\t&quot;pluribus&quot;: &quot;unum&quot;\n\t}\n]'
+
+            text = JSON.stringify([new Date()], function (key, value) {
+                return this[key] instanceof Date ?
+                    'Date(' + this[key] + ')' : value;
+            });
+            // text is '[&quot;Date(---current time---)&quot;]'
+
+
+        JSON.parse(text, reviver)
+            This method parses a JSON text to produce an object or array.
+            It can throw a SyntaxError exception.
+
+            The optional reviver parameter is a function that can filter and
+            transform the results. It receives each of the keys and values,
+            and its return value is used instead of the original value.
+            If it returns what it received, then the structure is not modified.
+            If it returns undefined then the member is deleted.
+
+            Example:
+
+            // Parse the text. Values that look like ISO date strings will
+            // be converted to Date objects.
+
+            myData = JSON.parse(text, function (key, value) {
+                var a;
+                if (typeof value === 'string') {
+                    a =
+/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2}(?:\.\d*)?)Z$/.exec(value);
+                    if (a) {
+                        return new Date(Date.UTC(+a[1], +a[2] - 1, +a[3], +a[4],
+                            +a[5], +a[6]));
+                    }
+                }
+                return value;
+            });
+
+            myData = JSON.parse('[&quot;Date(09/09/2001)&quot;]', function (key, value) {
+                var d;
+                if (typeof value === 'string' &amp;&amp;
+                        value.slice(0, 5) === 'Date(' &amp;&amp;
+                        value.slice(-1) === ')') {
+                    d = new Date(value.slice(5, -1));
+                    if (d) {
+                        return d;
+                    }
+                }
+                return value;
+            });
+
+
+    This is a reference implementation. You are free to copy, modify, or
+    redistribute.
+
+    This code should be minified before deployment.
+    See http://javascript.crockford.com/jsmin.html
+
+    USE YOUR OWN COPY. IT IS EXTREMELY UNWISE TO LOAD THIRD PARTY
+    CODE INTO YOUR PAGES.
+*/
+
+/*jslint evil: true */
+
+/*global JSON */
+
+/*members &quot;&quot;, &quot;\b&quot;, &quot;\t&quot;, &quot;\n&quot;, &quot;\f&quot;, &quot;\r&quot;, &quot;\&quot;&quot;, JSON, &quot;\\&quot;, call,
+    charCodeAt, getUTCDate, getUTCFullYear, getUTCHours, getUTCMinutes,
+    getUTCMonth, getUTCSeconds, hasOwnProperty, join, lastIndex, length,
+    parse, propertyIsEnumerable, prototype, push, replace, slice, stringify,
+    test, toJSON, toString
+*/
+
+if (!this.JSON) {
+
+// Create a JSON object only if one does not already exist. We create the
+// object in a closure to avoid global variables.
+
+    JSON = function () {
+
+        function f(n) {
+            // Format integers to have at least two digits.
+            return n &lt; 10 ? '0' + n : n;
+        }
+
+        Date.prototype.toJSON = function (key) {
+
+            return this.getUTCFullYear()   + '-' +
+                 f(this.getUTCMonth() + 1) + '-' +
+                 f(this.getUTCDate())      + 'T' +
+                 f(this.getUTCHours())     + ':' +
+                 f(this.getUTCMinutes())   + ':' +
+                 f(this.getUTCSeconds())   + 'Z';
+        };
+
+        var cx = /[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,
+            escapeable = /[\\\&quot;\x00-\x1f\x7f-\x9f\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,
+            gap,
+            indent,
+            meta = {    // table of character substitutions
+                '\b': '\\b',
+                '\t': '\\t',
+                '\n': '\\n',
+                '\f': '\\f',
+                '\r': '\\r',
+                '&quot;' : '\\&quot;',
+                '\\': '\\\\'
+            },
+            rep;
+
+
+        function quote(string) {
+
+// If the string contains no control characters, no quote characters, and no
+// backslash characters, then we can safely slap some quotes around it.
+// Otherwise we must also replace the offending characters with safe escape
+// sequences.
+
+            escapeable.lastIndex = 0;
+            return escapeable.test(string) ?
+                '&quot;' + string.replace(escapeable, function (a) {
+                    var c = meta[a];
+                    if (typeof c === 'string') {
+                        return c;
+                    }
+                    return '\\u' + ('0000' +
+                            (+(a.charCodeAt(0))).toString(16)).slice(-4);
+                }) + '&quot;' :
+                '&quot;' + string + '&quot;';
+        }
+
+
+        function str(key, holder) {
+
+// Produce a string from holder[key].
+
+            var i,          // The loop counter.
+                k,          // The member key.
+                v,          // The member value.
+                length,
+                mind = gap,
+                partial,
+                value = holder[key];
+
+// If the value has a toJSON method, call it to obtain a replacement value.
+
+            if (value &amp;&amp; typeof value === 'object' &amp;&amp;
+                    typeof value.toJSON === 'function') {
+                value = value.toJSON(key);
+            }
+
+// If we were called with a replacer function, then call the replacer to
+// obtain a replacement value.
+
+            if (typeof rep === 'function') {
+                value = rep.call(holder, key, value);
+            }
+
+// What happens next depends on the value's type.
+
+            switch (typeof value) {
+            case 'string':
+                return quote(value);
+
+            case 'number':
+
+// JSON numbers must be finite. Encode non-finite numbers as null.
+
+                return isFinite(value) ? String(value) : 'null';
+
+            case 'boolean':
+            case 'null':
+
+// If the value is a boolean or null, convert it to a string. Note:
+// typeof null does not produce 'null'. The case is included here in
+// the remote chance that this gets fixed someday.
+
+                return String(value);
+
+// If the type is 'object', we might be dealing with an object or an array or
+// null.
+
+            case 'object':
+
+// Due to a specification blunder in ECMAScript, typeof null is 'object',
+// so watch out for that case.
+
+                if (!value) {
+                    return 'null';
+                }
+
+// Make an array to hold the partial results of stringifying this object value.
+
+                gap += indent;
+                partial = [];
+
+// If the object has a dontEnum length property, we'll treat it as an array.
+
+                if (typeof value.length === 'number' &amp;&amp;
+                        !(value.propertyIsEnumerable('length'))) {
+
+// The object is an array. Stringify every element. Use null as a placeholder
+// for non-JSON values.
+
+                    length = value.length;
+                    for (i = 0; i &lt; length; i += 1) {
+                        partial[i] = str(i, value) || 'null';
+                    }
+
+// Join all of the elements together, separated with commas, and wrap them in
+// brackets.
+
+                    v = partial.length === 0 ? '[]' :
+                        gap ? '[\n' + gap +
+                                partial.join(',\n' + gap) + '\n' +
+                                    mind + ']' :
+                              '[' + partial.join(',') + ']';
+                    gap = mind;
+                    return v;
+                }
+
+// If the replacer is an array, use it to select the members to be stringified.
+
+                if (rep &amp;&amp; typeof rep === 'object') {
+                    length = rep.length;
+                    for (i = 0; i &lt; length; i += 1) {
+                        k = rep[i];
+                        if (typeof k === 'string') {
+                            v = str(k, value, rep);
+                            if (v) {
+                                partial.push(quote(k) + (gap ? ': ' : ':') + v);
+                            }
+                        }
+                    }
+                } else {
+
+// Otherwise, iterate through all of the keys in the object.
+
+                    for (k in value) {
+                        if (Object.hasOwnProperty.call(value, k)) {
+                            v = str(k, value, rep);
+                            if (v) {
+                                partial.push(quote(k) + (gap ? ': ' : ':') + v);
+                            }
+                        }
+                    }
+                }
+
+// Join all of the member texts together, separated with commas,
+// and wrap them in braces.
+
+                v = partial.length === 0 ? '{}' :
+                    gap ? '{\n' + gap +
+                            partial.join(',\n' + gap) + '\n' +
+                            mind + '}' :
+                          '{' + partial.join(',') + '}';
+                gap = mind;
+                return v;
+            }
+        }
+
+
+// Return the JSON object containing the stringify, parse, and quote methods.
+
+        return {
+            stringify: function (value, replacer, space) {
+
+// The stringify method takes a value and an optional replacer, and an optional
+// space parameter, and returns a JSON text. The replacer can be a function
+// that can replace values, or an array of strings that will select the keys.
+// A default replacer method can be provided. Use of the space parameter can
+// produce text that is more easily readable.
+
+                var i;
+                gap = '';
+                indent = '';
+                if (space) {
+
+// If the space parameter is a number, make an indent string containing that
+// many spaces.
+
+                    if (typeof space === 'number') {
+                        for (i = 0; i &lt; space; i += 1) {
+                            indent += ' ';
+                        }
+
+// If the space parameter is a string, it will be used as the indent string.
+
+                    } else if (typeof space === 'string') {
+                        indent = space;
+                    }
+                }
+
+// If there is a replacer, it must be a function or an array.
+// Otherwise, throw an error.
+
+                rep = replacer;
+                if (replacer &amp;&amp; typeof replacer !== 'function' &amp;&amp;
+                        (typeof replacer !== 'object' ||
+                         typeof replacer.length !== 'number')) {
+                    throw new Error('JSON.stringify');
+                }
+
+// Make a fake root object containing our value under the key of ''.
+// Return the result of stringifying the value.
+
+                return str('', {'': value});
+            },
+
+
+            parse: function (text, reviver) {
+
+// The parse method takes a text and an optional reviver function, and returns
+// a JavaScript value if the text is a valid JSON text.
+
+                var j;
+
+                function walk(holder, key) {
+
+// The walk method is used to recursively walk the resulting structure so
+// that modifications can be made.
+
+                    var k, v, value = holder[key];
+                    if (value &amp;&amp; typeof value === 'object') {
+                        for (k in value) {
+                            if (Object.hasOwnProperty.call(value, k)) {
+                                v = walk(value, k);
+                                if (v !== undefined) {
+                                    value[k] = v;
+                                } else {
+                                    delete value[k];
+                                }
+                            }
+                        }
+                    }
+                    return reviver.call(holder, key, value);
+                }
+
+
+// Parsing happens in four stages. In the first stage, we replace certain
+// Unicode characters with escape sequences. JavaScript handles many characters
+// incorrectly, either silently deleting them, or treating them as line endings.
+
+                cx.lastIndex = 0;
+                if (cx.test(text)) {
+                    text = text.replace(cx, function (a) {
+                        return '\\u' + ('0000' +
+                                (+(a.charCodeAt(0))).toString(16)).slice(-4);
+                    });
+                }
+
+// In the second stage, we run the text against
+// regular expressions that look for non-JSON patterns. We are especially
+// concerned with '()' and 'new' because they can cause invocation, and '='
+// because it can cause mutation. But just to be safe, we want to reject all
+// unexpected forms.
+
+// We split the second stage into 4 regexp operations in order to work around
+// crippling inefficiencies in IE's and Safari's regexp engines. First we
+// replace all backslash pairs with '@' (a non-JSON character). Second, we
+// replace all simple value tokens with ']' characters. Third, we delete all
+// open brackets that follow a colon or comma or that begin the text. Finally,
+// we look to see that the remaining characters are only whitespace or ']' or
+// ',' or ':' or '{' or '}'. If that is so, then the text is safe for eval.
+
+                if (/^[\],:{}\s]*$/.test(text.replace(/\\[&quot;\\\/bfnrtu]/g, '@').
+replace(/&quot;[^&quot;\\\n\r]*&quot;|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, ']').
+replace(/(?:^|:|,)(?:\s*\[)+/g, ''))) {
+
+// In the third stage we use the eval function to compile the text into a
+// JavaScript structure. The '{' operator is subject to a syntactic ambiguity
+// in JavaScript: it can begin a block or an object literal. We wrap the text
+// in parens to eliminate the ambiguity.
+
+                    j = eval('(' + text + ')');
+
+// In the optional fourth stage, we recursively walk the new structure, passing
+// each name/value pair to a reviver function for possible transformation.
+
+                    return typeof reviver === 'function' ?
+                        walk({'': j}, '') : j;
+                }
+
+// If the text is not JSON parseable, then a SyntaxError is thrown.
+
+                throw new SyntaxError('JSON.parse');
+            }
+        };
+    }();
+}</pre>
+</div>
+<div title="synchroAltPlugin" modifier="TonyGarnockJones" created="200806150000" tags="systemConfig excludeLists excludeSearch">
+<pre>/***
+|''Name:''|synchroAltPlugin|
+|''Description:''|an alternative take on DVCS with TiddlyWiki|
+|''Author:''|MartinBudden and TonyGarnockJones|
+|''Version:''|0.0.1|
+|''Date:''|June 15, 2008|
+|''License:''|[[Creative Commons Attribution-ShareAlike 3.0 License|http://creativecommons.org/licenses/by-sa/3.0/]] |
+|''~CoreVersion:''|2.4.0|
+
+!!Description
+//!!TODO write a brief description of the plugin here
+
+!!Usage
+//!!TODO describe how to use the plugin - how a user should include it in their TiddlyWiki, parameters to the plugin etc
+
+***/
+
+//{{{
+// Ensure that the plugin is only installed once.
+if(!version.extensions.synchroAltPlugin) {
+version.extensions.synchroAltPlugin = {installed:true};
+
+var revisionStore = null;
+
+function Synchrotron()
+{
+    //Dvcs._debugMode = true;
+    this.repo = new Dvcs.Repository();
+    this.checkout = this.repo.update(null);
+    return this;
+}
+
+Synchrotron.repositoryTiddlerTitle = '_synchrotronRepository';
+
+Synchrotron.prototype.importFromFile = function(path) {
+    var importStore = new TiddlyWiki();
+    var tw = loadFile(path);
+    if (window.netscape !== undefined) {
+	tw = convertUTF8ToUnicode(tw);
+    }
+    importStore.importTiddlyWiki(tw);
+    var repoTiddler = importStore.getTiddler(Synchrotron.repositoryTiddlerTitle);
+    if (!repoTiddler) {
+	alert(&quot;Repository Tiddler not found in &quot; + path +
+	      &quot;; is it really a Synchrotron-enabled TiddlyWiki?&quot;);
+	return;
+    }
+
+    var stats = this.import(repoTiddler.text);
+    if (stats) {
+	alert(&quot;Imported &quot; + (stats.revCount || &quot;no&quot;) + &quot; new revisions.&quot; +
+	      (stats.revDups ?
+	       &quot; The file&quot; + (stats.revCount ? &quot; also&quot; : &quot;&quot;) + &quot; contained &quot; + stats.revDups +
+	       &quot; revisions that were already present in this TiddlyWiki.&quot;
+	       : &quot;&quot;));
+    }
+    refreshDisplay();
+};
+
+Synchrotron.prototype.export = function()
+{
+	var repoExt = this.repo.exportRevisions();
+	var repoText = uneval(repoExt);
+	return repoText;
+};
+
+Synchrotron.prototype.import = function(repoText)
+{
+    if (repoText) {
+	var repoExt = eval(repoText);
+	return this.repo.importRevisions(repoExt);
+    } else {
+	return null;
+    }
+};
+
+Synchrotron.prototype.getUuid = function(tiddler) {
+    if (!tiddler.fields.uuid) {
+	tiddler.fields.uuid = this.checkout.createFile();
+    }
+    return tiddler.fields.uuid;
+};
+
+Dvcs.Mergers.Defaults[&quot;tags&quot;] = Dvcs.Mergers.simpleTextualMerger;
+
+Synchrotron.prototype.commitAllChanges = function() {
+    var $this = this;
+    var seenTiddlers = {};
+
+    store.forEachTiddler(checkForChanges);
+    function checkForChanges(title, tiddler) {
+	if (title != Synchrotron.repositoryTiddlerTitle &amp;&amp;
+	    !tiddler.doNotSave() &amp;&amp;
+	    !tiddler.isTagged(&quot;systemConfig&quot;))
+	{
+	    var id = $this.getUuid(tiddler);
+
+	    seenTiddlers[id] = id;
+
+	    function maybeStore(key, value) {
+		if (value !== $this.checkout.getProp(id, key)) {
+		    $this.checkout.setProp(id, key, value);
+		}
+	    }
+	    function maybeStoreText(key, value) {
+		var oldText = $this.checkout.getProp(id, key);
+		if (!oldText || value.join('\n') !== oldText.join('\n')) {
+		    $this.checkout.setProp(id, key, value);
+		}
+	    }
+
+	    function storeSingleField(tiddler, fieldName, value) {
+		if (!fieldName.match(/^temp\./)) {
+		    if (typeof value != &quot;string&quot;) {
+			value = &quot;&quot;;
+		    }
+		    maybeStore('field-' + fieldName, value);
+		}
+	    }
+
+	    maybeStore('title', tiddler.title);
+	    maybeStore('created', tiddler.created.convertToYYYYMMDDHHMM());
+	    maybeStore('modified', tiddler.modified.convertToYYYYMMDDHHMM());
+	    maybeStore('modifier', tiddler.modifier);
+	    tiddler.tags.sort();
+	    maybeStoreText('tags', tiddler.tags);
+	    maybeStoreText('text', tiddler.text.split('\n'));
+	    store.forEachField(tiddler, storeSingleField, true);
+	}
+    }
+
+    $this.checkout.forEachFile(deleteUnseen);
+    function deleteUnseen(repoId) {
+	if (!(seenTiddlers[repoId])) {
+	    $this.checkout.deleteFile(repoId);
+	}
+    }
+
+    $this.repo.commit($this.checkout, { committer: config.options.txtUserName });
+};
+
+Synchrotron.prototype.syncUItoCheckout = function() {
+    var $this = this;
+    var toDelete = {};
+    var existingTiddlers = {};
+
+    store.forEachTiddler(detectDeletable);
+    function detectDeletable(title, tiddler) {
+	if (title != Synchrotron.repositoryTiddlerTitle &amp;&amp;
+	    !tiddler.isTagged(&quot;systemConfig&quot;))
+	{
+	    var id = $this.getUuid(tiddler);
+	    if (!$this.checkout.fileExists(id)) {
+		toDelete[id] = tiddler;
+	    } else {
+		existingTiddlers[id] = tiddler;
+	    }
+	}
+    }
+
+    for (var id in toDelete) {
+	var tiddler = toDelete[id];
+	store.removeTiddler(tiddler.title);
+	story.closeTiddler(tiddler.title, true);
+    }
+
+    $this.checkout.forEachFile(reflectFileInUI);
+    function reflectFileInUI(id) {
+	var tiddler = existingTiddlers[id];
+	if (!tiddler) {
+	    tiddler = store.createTiddler($this.checkout.getProp(id,'title'));
+	    tiddler.fields.uuid = id;
+	}
+
+	var newTitle = $this.checkout.getProp(id, 'title', tiddler.title);
+	var newCreated = Date.convertFromYYYYMMDDHHMM($this.checkout.getProp(id, 'created', tiddler.created.convertToYYYYMMDDHHMM()));
+	var newModified = Date.convertFromYYYYMMDDHHMM($this.checkout.getProp(id, 'modified', tiddler.modified.convertToYYYYMMDDHHMM()));
+	var newModifier = $this.checkout.getProp(id, 'modifier', tiddler.modifier);
+	var newTags = $this.checkout.getProp(id, 'tags', tiddler.tags);
+	var newText = $this.checkout.getProp(id, 'text', tiddler.text.split('\n')).join('\n');
+	var newFields = {};
+	$this.checkout.forEachProp(id, function(propName, propValue) {
+				       if (propName.match(/^field-/)) {
+					   newFields[propName.substring(6)] = propValue;
+				       }
+				   });
+
+	tiddler.assign(newTitle, newText, newModifier, newModified, newTags, newCreated, newFields);
+    }
+
+    story.forEachTiddler(refreshDisplayedTiddler);
+    function refreshDisplayedTiddler(title, e) {
+	if (store.tiddlerExists(title) || store.isShadowTiddler(title)) {
+	    story.refreshTiddler(title, null, true);
+	} else {
+	    story.closeTiddler(title);
+	}
+    }
+};
+
+Synchrotron.prototype.updateToRevision = function(revId) {
+    if ((store &amp;&amp; store.isDirty &amp;&amp; store.isDirty()) ||
+	(story &amp;&amp; story.areAnyDirty &amp;&amp; story.areAnyDirty()))
+    {
+	if (!confirm(config.messages.confirmExit))
+	    return false;
+    }
+
+    this.checkout = this.repo.update(revId);
+    this.syncUItoCheckout();
+    store.setDirty(false);
+    story.forEachTiddler(function (title) { story.setDirty(title, false); });
+    refreshDisplay();
+    return true;
+};
+
+Synchrotron.prototype.revertCheckout = function() {
+    return this.updateToRevision(this.checkout.directParent);
+};
+
+Synchrotron.prototype.mergeWithRevision = function(revId) {
+    if (this.revertCheckout()) {
+	var openForEditing = {};
+	var merger = this.repo.merge(this.checkout.directParent, revId);
+	var fs = merger.files;
+
+	for (var i = 0; i &lt; merger.conflicts.length; i++) {
+	    var conflictRecord = merger.conflicts[i];
+	    var inode = conflictRecord.inode;
+
+	    for (var okProp in conflictRecord.partialResult) {
+		fs.setProp(inode, okProp, conflictRecord.partialResult[okProp]);
+	    }
+
+	    var winner;
+	    if (!(&quot;modified&quot; in conflictRecord.partialResult)) {
+		if (&quot;modified&quot; in conflictRecord.conflictDetails) {
+		    var aModified = conflictRecord.conflictDetails[&quot;modified&quot;][0].conflict.a;
+		    var bModified = conflictRecord.conflictDetails[&quot;modified&quot;][0].conflict.b;
+		    fs.setProp(inode, &quot;modified&quot;, aModified &gt; bModified ? aModified : bModified);
+		    winner = aModified &gt; bModified ? &quot;a&quot; : &quot;b&quot;;
+		} else {
+		    fs.setProp(inode, &quot;modified&quot;, new Date().convertToYYYYMMDDHHMM());
+		    winner = &quot;a&quot;;
+		}
+	    }
+
+	    for (var badProp in conflictRecord.conflictDetails) {
+		if (badProp != &quot;modified&quot;) {
+		    var r = conflictRecord.conflictDetails[badProp];
+		    if (badProp == &quot;text&quot;) {
+			fs.setProp(inode, &quot;text&quot;, Synchrotron.buildConflictMarkers(r));
+		    } else if (badProp == &quot;tags&quot;) {
+			fs.setProp(inode, &quot;tags&quot;, Synchrotron.mergeConflictingTags(r));
+		    } else {
+			fs.setProp(inode, badProp, r[0].conflict[winner]);
+		    }
+		}
+	    }
+
+	    openForEditing[inode] = fs.getProp(inode, &quot;title&quot;);
+	}
+	store.setDirty(true);
+	this.checkout = fs;
+	this.syncUItoCheckout();
+	refreshDisplay();
+
+	for (var inodeToEdit in openForEditing) {
+	    story.displayTiddler(null, openForEditing[inodeToEdit], DEFAULT_EDIT_TEMPLATE);
+	}	    
+    }
+};
+
+Synchrotron.buildConflictMarkers = function(r) {
+    var lines = [];
+    for (var i = 0; i &lt; r.length; i++) {
+        var item = r[i];
+        if (item.ok) {
+            lines = lines.concat(item.ok);
+        } else {
+            lines = lines.concat([&quot; &lt; &lt; &lt; &lt; &lt; &lt; &lt; &lt; &lt;&quot;], item.conflict.a,
+                                 [&quot; ============&quot;], item.conflict.b,
+                                 [&quot; &gt; &gt; &gt; &gt; &gt; &gt; &gt; &gt; &gt;&quot;]);
+        }
+    }
+    return lines;
+}
+
+Synchrotron.mergeConflictingTags = function(r) {
+    var lines = [];
+    for (var i = 0; i &lt; r.length; i++) {
+        var item = r[i];
+        if (item.ok) {
+            lines = lines.concat(item.ok);
+        } else {
+            lines = lines.concat(item.conflict.a, item.conflict.b);
+        }
+    }
+    var t = {}
+    for (i = 0; i &lt; lines.length; i++) {
+	t[lines[i]] = true;
+    }
+    lines = [];
+    for (i in t) {
+	lines.push(i);
+    }
+    lines.sort();
+    return lines;
+}
+
+restartSynchrotron = restart;
+function restart()
+{
+	restartSynchrotron();
+	revisionStore = new Synchrotron();
+	revisionStore.import(store.getTiddlerText(Synchrotron.repositoryTiddlerTitle));
+	revisionStore.checkout = revisionStore.repo.update(null);
+	revisionStore.syncUItoCheckout();
+}
+
+saveChangesSynchrotron = saveChanges;
+function saveChanges(onlyIfDirty,tiddlers)
+{
+	revisionStore.commitAllChanges();
+
+	var tiddler = new Tiddler(Synchrotron.repositoryTiddlerTitle);
+	tiddler.text = '//{{{\n' + revisionStore.export() + '\n//}}}\n';
+	tiddler.tags = ['excludeLists','excludeSearch'];
+	store.addTiddler(tiddler);
+	saveChangesSynchrotron(onlyIfDirty,tiddlers);
+
+	refreshDisplay();
+}
+
+config.shadowTiddlers.SideBarTabs =
+    config.shadowTiddlers.SideBarTabs
+    .replace(/&gt;&gt;$/, ' &quot;Versions&quot; &quot;Repository History&quot; TabVersions&gt;&gt;');
+
+merge(config.shadowTiddlers, {
+	  TabVersions: '&lt;&lt;synchrotronHistory&gt;&gt;'
+      });
+
+Synchrotron.images = {
+  &quot;blob_0.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAIdJREFUOI3tkjEKwzAMRV+6CnwmjTpFl1yshwnkLp5TNP4u9tJ2cWsohTzQIqEnGwlO/ooFuAIbcG+xtdzyiewGyMzk7nJ3mZkAtdqQdAUUEcpMdTJTEdGl64hwL6Wo1qpnaq0qpQjYR4RHRLzIOu2Vx7vGy8iUb5j+5elLmX42XTrtsE9+yANzZprVJVS76gAAAABJRU5ErkJggg==&quot;
+  ,&quot;blob_1.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJZJREFUOI3tkjEOAjEMBPdoLflNLv0KmvsYjznpep7h+lAqtDROAwiSUwQFjLRNooxieYE2zpm3HBqFzfyg8BUTgCOABcA1s+TZtEd2AkARoZnRzCgiBMC865LOAOjuLKWwUkqhu1fp3CNcVZURwXsigqpKAGuPcHP3B1klf7k9e/ixLQ8fefhShtemSmuxL5ndxf7zRW4Gj5yRa/KFewAAAABJRU5ErkJggg==&quot;
+  ,&quot;blob_10.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAKVJREFUOI3tkrEJwzAQRZ/AnUCQQoOkSaFKpaZI48UyhgcwuMkk6oPKn0ZuEhliYzABP7jmjv/gpIOTv8IAd2AEXrXG2jNbZA9A1lrFGBVjlLVWgOpslbQHlFJSKUUzpRSllGZpv0Y4OeeUc9YnOWc55wRMrWAHPBv9awgB7/3XwHtPCIFhGG6tbAdcGsJf3scsZJtsXnmJ3T9l97OZpbsd9smBvAHQ9YOCh41JCAAAAABJRU5ErkJggg==&quot;
+  ,&quot;blob_11.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAALVJREFUOI3tkjEKAjEQRd/KdoGARQ5iY5EqZU5hsxfzGDnAwjZWHiO9pJKxSRrNanZZsNAHv5lhHmQy0MY15yO7RmEzPyh8RwecgBG454y51q2RnQFRSolzTpxzopQSQHJvkXQAxHsvKSUppJTEe1+kwxLhpLWWGKM8E2MUrbUAU22wBy6V+sFaizHmpWGMwVpLCOFYm+2BfUXYsp9uZrbK6ifPsfmnbH42RVoO+5az+rD/fJEHZB6FPnyuglsAAAAASUVORK5CYII=&quot;
+  ,&quot;blob_12.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJxJREFUOI3tkjEKAyEUBceQThByI8t/ijR7sRxmYZtUewzrBKvlpdHGFIkbm8AOvEZlvuKDg7/CAVdgBp4lc1lze2Q3QN57xRgVY5T3XoDKXpd0AmRmyjmrknOWmVXp1CNcQghKKaklpaQQgoClR/gwszdZpdxyA+5tzj1TGhxw+fbw8CcP/5ThtanSWuytZHexW9aSj5x+nXQIeQEBLaCqFSFpfQAAAABJRU5ErkJggg==&quot;
+  ,&quot;blob_13.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJ5JREFUOI3tlDEKAyEQRZ8hnSDkRpZzijR7sRxmYZtUOYZ1wGr5abQxkGiQNMmD3zjyVGYQ+riVvOXQKezmB4WvcMAZWIG9ZC1r7hPZBZD3XjFGxRjlvRegUhuSLoDMTDlnVXLOMrMqXUaEWwhBKSW1pJQUQhCwjQjvZvYkq5Rb7sC1zXHklAYHnHo3T3/y9KZMH5sqnTbYLf/v64vCB5RHomZlltYsAAAAAElFTkSuQmCC&quot;
+  ,&quot;blob_14.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAALJJREFUOI3tkjEOwiAUhr+abiQkDhzExYGJkVO49GIegwM06eLkMdgNk3kusFQaLXYx6Ze85b38HwEe7PwVHXABRuCRa8y9rkV2BUQpJc45cc6JUkoAybNV0gEQ772klKSQUhLvfZEOa4ST1lpijDInxihaawGmWrAHbpX+yVqLMeZtYIzBWksI4VzL9sCxIvzmfbqFbJXmKy+x+adsvjZFWhb7mat5sefcc33k8OtJu5AXRsKFPuF7sfwAAAAASUVORK5CYII=&quot;
+  ,&quot;blob_15.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAALVJREFUOI3tlLENwyAQRR+ROySkFAySJgUVJVOk8WIZwwNYcpMqY7AAVXRpoHFwgi0rTfKka+70nwScgDbuuT5yaBQ284PCdyjgAozAI9eYe2qL7AqI1lq89+K9F621AJJnq6Q9ICEESSlJIaUkIYQi7dcIJ2OMxBhlToxRjDECTLVgB9wq/ZNzDmvty8Bai3OOYRjOtWwHHCvClvtRC9kqm4+8xO6PsvvaFOluiz3n/319UfgE2dyG+rvKV2wAAAAASUVORK5CYII=&quot;
+  ,&quot;blob_2.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJNJREFUOI3tkjEKAjEQRd+CXSDgjaacU9jsxTzMwjaeJPVKKvk2SaMRiQZE2Ae/mZBHZjKw81dMwAlYgGvJUmrTJ7IzoBCCzExmphCCAJWzLukMyN2Vc1Yl5yx3r9K5R7jGGJVS0iMpJcUYBayvLl8aubn7k6xSXrm1ZAfg2Kh3D/0dX7XcYvinDF+bKh222Ds/5A5/457uDkGvZQAAAABJRU5ErkJggg==&quot;
+  ,&quot;blob_3.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAKNJREFUOI3tkr0KwjAYRU/FLRDwjTJ+T+HSF/NhCl2cfIzMSqZyXZJFo01rwUEP3OULOeTnQhuXnFl2jcJmflD4jg44AgMw5Qx51q2RnQA55xRCUAhBzjkBymuLpD0gM1NKSYWUksysSPslwtF7rxijHokxynsvYHy1+VzJZGZPskI+5bUm2wOHynzxo8/x0ZVrbP4pm9emSEuxbzmri/3ni9wBEwygqo8e4tAAAAAASUVORK5CYII=&quot;
+  ,&quot;blob_4.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJVJREFUOI3tkjEKwzAMRX+6CnQmjTpFl1yshwlk7zE0p2gqv4u8pIXi1EtpH/zFxs82+sCfr2ICcAawALhVllqbjsguACgiNDOaGUWEAFh7XdIZAN2dmclGZtLdm3TuEa6qyojgnoigqhLA2iPc3P1J1qhXbq8Onnpu+YThXx4+lOG1adJW7HvlcLH3XCtvGT7lHxQ+AOkknJHNxLgkAAAAAElFTkSuQmCC&quot;
+  ,&quot;blob_5.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJZJREFUOI3tlDEKwzAMRX+6CnQmjTpFl1yshwlk7zE0BzSV38Ve0tLaxWRpHmix8MPiCwNt3Et95dIobOYPhZ+YAFwBLAAepZZyNv0iuwGgiNDMaGYUEQJg6XVJZwB0d2YmK5lJd6/SuUe4qiojgnsigqpKAGuPcHP3F1mlvHJ7d/GwlIePPDyU4WtTpcMWe8/5fR0ofAJ8TZ5N0sDKDwAAAABJRU5ErkJggg==&quot;
+  ,&quot;blob_6.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJ9JREFUOI3tkrEKwyAURU9KN0HoHzm+r+iSH+vHBLJ0ymc4tziF20WX1BJMshRy4C5PPD71wclf0QF3YADeOUOudVtkD0DOOYUQFEKQc06A8lqTtAdkZkopqZBSkpkVad8iHL33ijFqSYxR3nsB46/Nz0pmM/uSFXKXr5rsCtwq9eZHX2PXlWsc/imHj02RlsGeczYP9pIpZ5XL3pNOIR/1oaCqrqJp9wAAAABJRU5ErkJggg==&quot;
+  ,&quot;blob_7.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAKNJREFUOI3tlLEKwjAURU/FLRDwjzK+r3Dpj/kxhS5O/YzMQqZyXZKlRttocdEDd3khh7zkEdjGlLPKYaNwMz8ofEUHnIEBmHOGXOvekV0AOecUQlAIQc45AcprTdIekJkppaRCSklmVqR9i3D03ivGqCUxRnnvBYzPNl8rmc3sQVbIp7zVZEfgVKk3X/oaH7VcY/dH2X1sinS3wV7y/76+KLwDiMqiZru+wK0AAAAASUVORK5CYII=&quot;
+  ,&quot;blob_8.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJBJREFUOI3tkjEKAjEQRV/ALjDgjaacU9jsxTzMwjaeJLWSSr5N0qyNkYAI++A3yfAyYQYO/ooEXIAVeLSs7Sx9I7sCyjnL3eXuyjkLULsbki6AIkK1VnVqrYqILl1GhJuZqZSiPaUUmZmAbUR4j4g3Wad1+QRu+5xGXtmRgPOnxdO/PH0o09emS6ct9sEPeQGLYJ7ucs6fnQAAAABJRU5ErkJggg==&quot;
+  ,&quot;blob_9.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJ9JREFUOI3tkjEKAyEUBceQThByI8t/ijR7sRxmYZtUOYZ1gtXy0mizgUQXIUUy8BqV8YsP2riVfOTQKGzmB4XvcMAZmIG1ZC5rbo/sAsh7rxijYozy3gtQ2euSToDMTDlnVXLOMrMqnXqESwhBKSVtSSkphCBg6RHezexFVilTrsB1m2PPLRsccGo9PPzJwz9leG2qtBb7UbK72H++yBMeiaCqdfixnAAAAABJRU5ErkJggg==&quot;
+  ,&quot;slide_l.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAADFJREFUOI1jYBgFo2AYAkYqmsXMwMAQSE3DVjEwMPyntmGrqG0Y86hho4YhQBixhgEAQRwWyV5wCkoAAAAASUVORK5CYII=&quot;
+  ,&quot;slide_m.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAE9JREFUOI3t0zEKgDAMBdAHvaJ6yF5SByuIgxUasEP+FggPQhLeU1CxY+30dnPHaqsTS6wlFBOIFSycHxCBXZMO57mDUGye60jsZwy2r9gB/Z0tlT2EWtcAAAAASUVORK5CYII=&quot;
+  ,&quot;slide_r.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAADpJREFUOI3t06ENACAMRcFLmJElWRIEFSgwVaTP/aQ5V+41DEz0x+2zExuxCyssSsVkY+wPSMOq6ssWvM8WywislYYAAAAASUVORK5CYII=&quot;
+  ,&quot;stick_0.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAABVJREFUOI1jYBgFo2AUjIJRMAqoAwAGVAAB8lwiXwAAAABJRU5ErkJggg==&quot;
+  ,&quot;stick_1.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAACNJREFUOI1jYCAOXIJigoCJSAOJBqMGjho4auCogaMGDhUDAZwOAcsorz0zAAAAAElFTkSuQmCC&quot;
+  ,&quot;stick_10.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJVJREFUOI3t07sJAlEQRuHPt2IgC4Z2YGIJlmBPYgOmYgkbiLGhmX2YrqkgGuw1MViXe41kTzIMDId/BoaGhj+khUuiY4QJxuh1kSWIMgxD/8QjRjTALggKbLCIDKWPU5AdMY0VvdkH2RbtVNkyyA7opMrgjJsfrAlzZbr1t8G6d1iFmscm+iTHXfkIldRNOMNVuXYlL+XfFT2H2O6WAAAAAElFTkSuQmCC&quot;
+  ,&quot;stick_11.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAALVJREFUOI3t0ztuAkEMgOEvYQkQChQpp6DikrkALcohUOrcgIqCjj5FilDQ8UixlngosN5su780Gllj/bLHMjmWcSp5TArTtMJW+A8esEjkjeNe/fE2wAhDdAu8JISduM9zBxH3Iz5in3DhcvV6mIXgB2+YZEXXwid8huwDr3VF18L3kE01HOgS65DNnf60kXCLjYo2s2X38axs9btRacGXst3a07zFBgflItwl23KBnbLKu/wCR20gpGTSl3wAAAAASUVORK5CYII=&quot;
+  ,&quot;stick_12.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAANNJREFUOI3t07FKA0EQgOHvoijaxuBDaCEEe5uUwUeyEDurtEHfwECQlNopCKnsrUJqFcFCQs7i5sgVeuxhJ/nLnZl/d2ZY1qz5h2SYYo5nTPCEvIHjAKc4xj684DMkeYj7CaITPFbqvjArgy10cYmPSLjGzg+ibQwj5w0XOKq7uYObKLjHbiW2hbuI3WIvoRMUsx1UXlpyFWeD6KoRGUYh6ClmlmOMjaaykjZeFcN/wLsGbf7GmdUmz/8qg8OKsHabqbSwwFIx11o2E4TLEGYSftA3PXkxeOJzoewAAAAASUVORK5CYII=&quot;
+  ,&quot;stick_13.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAANtJREFUOI3t07FKA0EQBuDvTlG0VfEhtAgEe19AfCQLsbNKK/oGCiIpYykEUtlrI9YqooVFziJzuEg896JlftjmduZj9+aOvNzG+jVlJpidOTgHZ8giRng0+XD7GKJqYWxhHzvYhDu8B1IFvPetadqfsoubpO8DD/VmiS6O8RoFZ1iZAi7jJGqecYRO0xU2cB4N11hNwCUMYu8K601QmgK95KQ1eBrPemYYaIGLAO5N3nWFSyy0xeqs4QlvsV60uOZPOfA1ycO/YrCdgI3TzE2JcYDFf4ACHOcUfgK/fDpV7BBCtAAAAABJRU5ErkJggg==&quot;
+  ,&quot;stick_14.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAM1JREFUOI3t0rFKA0EQgOFvY2KMFiKat7AQ8gI2PpeF2FmlFX0DA2Jtuvg4apAYCHpnkbl4CDnvsJP81c7O7r8z7LBhwz8kYYYF5phG3IQe9rGHTgpZO+QifsZ7DdEBdiLO8VkkWxjgCm+RvI1LP+niOs684hInVS/3cRcXxtgt5bbxGLkHHP3SxYqEYanSgpvYG0ZXjUgYheAMp7G+x1ZTWcEhXvCEieUU1G5zHedRWY6Lv8rguCSs/M26tPCBzPesrqVdQ5iFMFlWWckXLE8s0STxUmsAAAAASUVORK5CYII=&quot;
+  ,&quot;stick_15.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAOFJREFUOI3t071KA0EQwPHfnt9aiKidTyApBB/QQuys0oq+gYJY60NYpItVaj+QKAgmFpmTNcTcGtv8Ydmdm50/c8wdZdzHaqQqFBYzF86FM5DQxwfe8RLxOPuxdybk1rCJDSylkC2GXMSPeMuK9mLvjYm2sBrxEJ91ssIhTvEayYso4uevt4KzuPOMExxM6PybXVxGwR3WM+EybiN3g51popyEdtZpLTyPZ20zDDThKgQP6Mb5Ggt/ldVs48lo8n2jr6D4NX/jKDob4vi/MmhlwqnTLKXCIISp4W4xg1iNfAH/IDYHUEEa4gAAAABJRU5ErkJggg==&quot;
+  ,&quot;stick_2.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAACRJREFUOI1jYBgFo2AYAkYGBoYz1DSQhYGBQZCaBo6CUTAsAQAO/gDjGameSwAAAABJRU5ErkJggg==&quot;
+  ,&quot;stick_3.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAD9JREFUOI1jYCAOXIJigoCJSAOJBqMGjhpIBmBkYGA4Q4Q6LSh9jZBCFgYGBkEiDGSG0sSoJQqMZr1RA4eUgQCBQAVfOGtUugAAAABJRU5ErkJggg==&quot;
+  ,&quot;stick_4.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJBJREFUOI3tzjEOAUEYBeBvV0UrEncQlTOoROJGLqByADdYjV6pUumVEp1C0KEwiUZiYqaSfcmfaV6+edSp84dpYIsRerjhkIruccUj3A7jVLTEADOcA7xAMxWGDqqArtHKgRaYey/NkgLLgA5zoW2csMkFwtRrZT+mXEZ0qvBOfl306dMLVrHlb7njiG4M+ATgfRo0TB7IrwAAAABJRU5ErkJggg==&quot;
+  ,&quot;stick_5.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAKJJREFUOI3t0zEKwjAYgNFncVBX8RZunsObOYgH8Aa6uboLTu66CS4iKDqpdWgKxaWh7dgPsoVHEvIT1yGs0pJIMLoWbMEKdbHHWfZxN9ghrYMe8QpIGuDp357oSclLMMEMjwAv0a8KFhthFdAtBnVB6GBROGltMEfXAT01AcIQNzxjwbJ/eMVc9o69WkcrNJZd+9IUmOCDe+zmsr54y6aqtB8W9CgIIj5T8QAAAABJRU5ErkJggg==&quot;
+  ,&quot;stick_6.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAI9JREFUOI3tzjEOAVEUheFvJhpakdiEyhr0dmQDqlmAHYxGr7QWFREZkilQeKKRePFeJfM3997k5L+Hjo4/pECDFlecwp0kbNELu3AfcEkRl5hiiTPuWKGfIn0xQh2kWwxySAtU3k2zUGAdpLNc0iGO2OUSwsKz5SQmXEZk6jDnvzb69LTBJjb8jRv2GMcIHzSiGs7D32QGAAAAAElFTkSuQmCC&quot;
+  ,&quot;stick_7.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAALBJREFUOI3t1D1qAkEUwPGfi4WmFbucIKTzmimCB/AGegQPYZEylYWNhigqLH4V84RFAjtkt/QPw5thHn/efJLHIlotRaYwm6fwKfwHHexR4ojfGD/yFvErR1iiG30x3uBQyXuNuMyttMAIH9jhign6MZ/99P5iiGlI53hpKiQtf1yptLHwLp2F9LsNIQzwI518K9/XGp/SPvYalVbhXVr2qi1hgTO2ucl1XHCSLn8tN1MaJxupl4lMAAAAAElFTkSuQmCC&quot;
+  ,&quot;stick_8.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAJNJREFUOI3t0yEOwkAQRuEPSOACJBhugMHgewO4U8MFsIQjVBA0Ei6CwILFFLGLQdBmt4r0JZs1k5d/JjP09Pwhgw4cC6yxwixHVOCKOr4XbimiCfZR8sAWy9RUY5yj7IRpqujDIcp2GObKiig7YpQrgwueOmiTsBo1yqbCtnPYxL9KTfRNJexZ4yG0TTjHXWj7J2/dMhe9PX35ywAAAABJRU5ErkJggg==&quot;
+  ,&quot;stick_9.png&quot;: &quot;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAAB3RJTUUH2AYFChQyYckycwAAAKNJREFUOI3t0zEOAUEUBuAPG0QtcQiNRu8GTuUCWnEIUWsdQK/SKBS20Iig2NFssLNWuX8y3cyX9+dliMsunMI0I8Ho1GAN/pDkD8YQU4wxiH307qdMsMUjnCsOv4AdLAJyxgyjWCgPtrEJ2Br9slAeXAZsruJCd9gHbIVWFewFXpAqqBk7dhc9WdVTpdFCjrK6pbf5KSnuaBRdjK2c4Cab8muerVAjt5zCDvoAAAAASUVORK5CYII=&quot;
+};
+
+config.macros.synchrotronHistory = {};
+config.macros.synchrotronHistory.handler = function(place) {
+    var repo = revisionStore.repo;
+    var ordering = DrawDvcs.renderRepository(repo);
+
+    createTiddlyButton(place,
+ 		       &quot;Import...&quot;,
+ 		       &quot;Import revisions from another TiddlyWiki file&quot;,
+		       config.macros.synchrotronHistory.importButtonClicked);
+
+    var para = document.createElement(&quot;p&quot;);
+    para.style.cssText = 'line-height: 0px; white-space: nowrap;';
+
+    for (var i = 0; i &lt; ordering.length; i++) {
+        var item = ordering[i];
+        var rev = repo.lookupRev(item.revId);
+        var pictures = item.pictures;
+        for (var j = 0; j &lt; pictures.length; j++) {
+	    var img = document.createElement('img');
+	    img.src = Synchrotron.images[pictures[j]];
+	    para.appendChild(img);
+	}
+	var summary =
+	    (rev.metadata||{}).committer + &quot; &quot; + new Date(rev.timestamp||0).convertToYYYYMMDDHHMM();
+	var s = createTiddlyButton(para,
+				   summary,
+				   &quot;Click for a menu of options for this revision&quot;,
+				   config.macros.synchrotronHistory.revisionClicked);
+	s.revisionId = item.revId;
+	if (revisionStore.checkout.directParent == item.revId) {
+	    s.style.cssText = 'background-color: blue; color: white;';
+	}
+	if (revisionStore.checkout.additionalParent == item.revId) {
+	    s.style.cssText = 'background-color: #00cc00; color: white;';
+	}
+	para.appendChild(document.createElement(&quot;br&quot;));
+    }
+    place.appendChild(para);
+};
+
+config.macros.synchrotronHistory.importButtonClicked = function(event) {
+    var e = (event || window.event);
+    try {
+	netscape.security.PrivilegeManager.enablePrivilege(&quot;UniversalXPConnect&quot;);
+	var fp = Components.classes[&quot;@mozilla.org/filepicker;1&quot;].createInstance(Components.interfaces.nsIFilePicker);
+	fp.init(window, &quot;Choose a TiddlyWiki to import from&quot;, 0);
+	if (fp.show() == 0 &amp;&amp; fp.file.exists()) {
+	    // OK clicked, and selected file exists.
+	    revisionStore.importFromFile(fp.file.path);
+	}
+    } catch (ex) {
+	alert(ex);
+    }
+    e.cancelBubble = true;
+    if (e.stopPropagation) e.stopPropagation();
+    return false;
+};
+
+config.macros.synchrotronHistory.revisionClicked = function(event) {
+    var e = (event || window.event);
+    var revId = e.target.revisionId;
+    var popup = Popup.create(this);
+
+    createTiddlyText(createTiddlyElement(popup, &quot;li&quot;, null, &quot;listTitle&quot;), &quot;Revision &quot; + revId);
+
+    if (revId != revisionStore.checkout.directParent || store.isDirty()) {
+	createTiddlyButton(createTiddlyElement(popup, &quot;li&quot;),
+			   (revId == revisionStore.checkout.directParent) ? &quot;Revert&quot; : &quot;Checkout&quot;,
+			   &quot;Displays this revision as a base to edit from&quot;,
+			   function () {
+			       revisionStore.updateToRevision(revId);
+			   });
+    } else {
+	createTiddlyText(createTiddlyElement(popup, &quot;li&quot;, null, &quot;disabled&quot;), &quot;Checkout&quot;);
+    }
+
+    if (revisionStore.repo.canMerge(revisionStore.checkout.directParent,
+				    revId)) {
+	createTiddlyButton(createTiddlyElement(popup, &quot;li&quot;),
+			   &quot;Merge&quot;,
+			   &quot;Merges this revision into the current revision&quot;,
+			   function () {
+			       revisionStore.mergeWithRevision(revId);
+			   });
+    } else {
+	createTiddlyText(createTiddlyElement(popup, &quot;li&quot;, null, &quot;disabled&quot;), &quot;Merge&quot;);
+    }
+
+    Popup.show();
+    e.cancelBubble = true;
+    if (e.stopPropagation) e.stopPropagation();
+    return false;
+};
+
+}//# end of 'install only once'
+//}}}</pre>
+</div>
 </div>
 <!--POST-STOREAREA-->
 <!--POST-BODY-START-->
