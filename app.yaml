@@ -4,5 +4,13 @@ runtime: python
 api_version: 1
 
 handlers:
+- url: /
+  static_files: rdfvan_tiddlywiki.html
+  upload: rdfvan_tiddlywiki.html
+
+- url: /TiddlySaver.jar
+  static_files: TiddlySaver.jar
+  upload: TiddlySaver.jar
+
 - url: .*
   script: main.py
